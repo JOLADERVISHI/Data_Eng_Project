@@ -7,22 +7,19 @@ USE OlistEcommerce;
 GO
 
 -- Step 1: Table Creation
-CREATE TABLE Orders (
-    order_id NVARCHAR(50) PRIMARY KEY,
-    customer_id NVARCHAR(50),
-    order_status NVARCHAR(20),
-    order_purchase_timestamp DATETIME,
-    order_approved_at DATETIME,
-    order_delivered_carrier_date DATETIME,
-    order_delivered_customer_date DATETIME,
-    order_estimated_delivery_date DATETIME
-);
 
 CREATE TABLE Customers (
     customer_id NVARCHAR(50) PRIMARY KEY,
     customer_zip_code_prefix NVARCHAR(20),
     customer_city NVARCHAR(50),
     customer_state NVARCHAR(10)
+);
+
+CREATE TABLE Sellers (
+    seller_id NVARCHAR(50) PRIMARY KEY,
+    seller_zip_code_prefix NVARCHAR(20),
+    seller_city NVARCHAR(50),
+    seller_state NVARCHAR(10)
 );
 
 CREATE TABLE Products (
@@ -37,11 +34,16 @@ CREATE TABLE Products (
     product_width_cm FLOAT
 );
 
-CREATE TABLE Sellers (
-    seller_id NVARCHAR(50) PRIMARY KEY,
-    seller_zip_code_prefix NVARCHAR(20),
-    seller_city NVARCHAR(50),
-    seller_state NVARCHAR(10)
+CREATE TABLE Orders (
+    order_id NVARCHAR(50) PRIMARY KEY,
+    customer_id NVARCHAR(50),
+    order_status NVARCHAR(20),
+    order_purchase_timestamp DATETIME,
+    order_approved_at DATETIME,
+    order_delivered_carrier_date DATETIME,
+    order_delivered_customer_date DATETIME,
+    order_estimated_delivery_date DATETIME,
+    FOREIGN KEY (customer_id) REFERENCES Customers(customer_id)
 );
 
 CREATE TABLE Order_Items (
@@ -50,8 +52,12 @@ CREATE TABLE Order_Items (
     product_id NVARCHAR(50),
     seller_id NVARCHAR(50),
     shipping_limit_date DATETIME,
-    price FLOAT,
-    freight_value FLOAT
+    price DECIMAL(10, 2),
+    freight_value DECIMAL(10, 2),
+    PRIMARY KEY (order_id, order_item_id),
+    FOREIGN KEY (order_id) REFERENCES Orders(order_id),
+    FOREIGN KEY (product_id) REFERENCES Products(product_id),
+    FOREIGN KEY (seller_id) REFERENCES Sellers(seller_id)
 );
 
 CREATE TABLE Order_Payments (
@@ -59,26 +65,32 @@ CREATE TABLE Order_Payments (
     payment_sequential INT,
     payment_type NVARCHAR(50),
     payment_installments INT,
-    payment_value FLOAT
+    payment_value DECIMAL(10, 2),
+    FOREIGN KEY (order_id) REFERENCES Orders(order_id)
 );
 
 CREATE TABLE Order_Reviews (
-    review_id NVARCHAR(50),
+    review_id NVARCHAR(50) PRIMARY KEY,
     order_id NVARCHAR(50),
     review_score INT,
     review_comment_title NVARCHAR(MAX),
     review_comment_message NVARCHAR(MAX),
     review_creation_date DATETIME,
-    review_answer_timestamp DATETIME
+    review_answer_timestamp DATETIME,
+    FOREIGN KEY (order_id) REFERENCES Orders(order_id)
 );
 
+
 -- Step 2: Data Cleaning
+
 WITH Duplicates AS (
-    SELECT *,
+    SELECT order_id,
            ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY order_id) AS rn
     FROM Orders
 )
-DELETE FROM Duplicates WHERE rn > 1;
+DELETE FROM Orders
+WHERE order_id IN (SELECT order_id FROM Duplicates WHERE rn > 1);
+
 
 -- Handle missing values
 UPDATE Orders SET order_status =  ISNULL(order_status, 'Unknown');
@@ -97,7 +109,7 @@ CREATE NONCLUSTERED INDEX idx_orders_customer_id ON Orders(customer_id);
 CREATE NONCLUSTERED INDEX idx_orderitems_product_id ON Order_Items(product_id);
 CREATE NONCLUSTERED INDEX idx_orderitems_order_id ON Order_Items(order_id);
 
--- Step 3: Create FactOrderItems
+-- Step 3: -- Step 3: Create FactOrderItems with Partition
 
 --Create Partition
 CREATE PARTITION FUNCTION pf_OrderYearRange (DATE)
@@ -124,30 +136,41 @@ CREATE CLUSTERED INDEX idx_fact_order_item_id ON FactOrderItems(order_item_id);
 CREATE NONCLUSTERED INDEX idx_fact_order_id ON FactOrderItems(order_id);
 
 
-
 ---Create procedure to calculate  data and store in a fact table
 CREATE PROCEDURE PR_InsertFactOrderItems
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    INSERT INTO FactOrderItems
-    SELECT 
-        a.order_item_id,
-        a.order_id,
-        a.product_id,
-        a.seller_id,
-        a.price + a.freight_value AS total_price,
-        DATEDIFF(DAY, b.order_purchase_timestamp, b.order_delivered_customer_date) AS delivery_time,
-        ISNULL(MAX(c.payment_installments), 0) AS payment_count,
-        a.price - a.freight_value AS profit_margin,
-        b.order_purchase_timestamp
-    FROM Order_Items a
-    JOIN Orders b ON a.order_id = b.order_id
-    LEFT JOIN Order_Payments c ON a.order_id = c.order_id
-    GROUP BY a.order_item_id, a.order_id, a.product_id, a.seller_id, a.price, a.freight_value,
-             b.order_purchase_timestamp, b.order_delivered_customer_date;
-			 
+    BEGIN TRY
+        INSERT INTO FactOrderItems
+        SELECT 
+            a.order_item_id,
+            a.order_id,
+            a.product_id,
+            a.seller_id,
+            a.price + a.freight_value AS total_price,
+            DATEDIFF(DAY, b.order_purchase_timestamp, b.order_delivered_customer_date) AS delivery_time,
+            ISNULL(MAX(c.payment_installments), 0) AS payment_count,
+            a.price - a.freight_value AS profit_margin,
+            b.order_purchase_timestamp
+        FROM dbo.Order_Items a
+        JOIN dbo.Orders b ON a.order_id = b.order_id
+        LEFT JOIN dbo.Order_Payments c ON a.order_id = c.order_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dbo.FactOrderItems f
+            WHERE f.order_id = a.order_id AND f.order_item_id = a.order_item_id)
+        GROUP BY 
+            a.order_item_id, a.order_id, a.product_id, a.seller_id, 
+            a.price, a.freight_value, 
+            b.order_purchase_timestamp, b.order_delivered_customer_date;
+    END TRY
+    BEGIN CATCH
+        PRINT ERROR_MESSAGE();
+    END CATCH
+END;
+GO
+
 
 EXEC PR_InsertFactOrderItems;
 
