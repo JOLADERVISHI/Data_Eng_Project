@@ -109,7 +109,7 @@ CREATE NONCLUSTERED INDEX idx_orders_customer_id ON Orders(customer_id);
 CREATE NONCLUSTERED INDEX idx_orderitems_product_id ON Order_Items(product_id);
 CREATE NONCLUSTERED INDEX idx_orderitems_order_id ON Order_Items(order_id);
 
--- Step 3: -- Step 3: Create FactOrderItems with Partition
+ -- Step 3: Create FactOrderItems with Partition
 
 --Create Partition
 CREATE PARTITION FUNCTION pf_OrderYearRange (DATE)
