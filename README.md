@@ -1,4 +1,4 @@
-# Olist E-Commerce Data Engineering Solution
+# E-Commerce Data Engineering Solution
 
 This project contains a SQL-based data engineering solution for the Brazilian E-Commerce Public Dataset by Olist.
 
