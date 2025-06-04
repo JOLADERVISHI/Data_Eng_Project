@@ -98,6 +98,15 @@ CREATE NONCLUSTERED INDEX idx_orderitems_product_id ON Order_Items(product_id);
 CREATE NONCLUSTERED INDEX idx_orderitems_order_id ON Order_Items(order_id);
 
 -- Step 3: Create FactOrderItems
+
+--Create Partition
+CREATE PARTITION FUNCTION pf_OrderYearRange (DATE)
+AS RANGE RIGHT FOR VALUES ('2017-01-01', '2018-01-01', '2019-01-01');
+
+CREATE PARTITION SCHEME ps_OrderYearScheme
+AS PARTITION pf_OrderYearRange ALL TO ([PRIMARY]);
+
+
 CREATE TABLE FactOrderItems (
     order_item_id INT,
     order_id NVARCHAR(50),
@@ -110,16 +119,10 @@ CREATE TABLE FactOrderItems (
     order_purchase_timestamp DATETIME)
 	ON ps_OrderYearScheme(order_purchase_timestamp);
 
-
+-- Create Index
 CREATE CLUSTERED INDEX idx_fact_order_item_id ON FactOrderItems(order_item_id);
 CREATE NONCLUSTERED INDEX idx_fact_order_id ON FactOrderItems(order_id);
 
---Create Partition
-CREATE PARTITION FUNCTION pf_OrderYearRange (DATE)
-AS RANGE RIGHT FOR VALUES ('2017-01-01', '2018-01-01', '2019-01-01');
-
-CREATE PARTITION SCHEME ps_OrderYearScheme
-AS PARTITION pf_OrderYearRange ALL TO ([PRIMARY]);
 
 
 ---Create procedure to calculate  data and store in a fact table
@@ -149,7 +152,7 @@ BEGIN
 EXEC PR_InsertFactOrderItems;
 
 
--- Step 4: Window Functions
+-- Step 4: Window Functions 
 SELECT 
     t.customer_id,
     SUM(p.price) OVER (PARTITION BY t.customer_id ORDER BY t.order_purchase_timestamp) AS running_total
@@ -165,6 +168,31 @@ INTO AvgDeliveryTimePerCategory
 FROM Order_Items t
 JOIN Products p ON t.product_id = p.product_id
 JOIN Orders o ON t.order_id = o.order_id;
+
+
+--(Alternative solution for the first query using indexed view)
+
+CREATE VIEW dbo.vw_DailySalesPerCustomer
+WITH SCHEMABINDING
+AS
+SELECT 
+    t.customer_id,
+    CONVERT(DATE, t.order_purchase_timestamp) AS order_date,
+    COUNT_BIG(*) AS order_count,
+    SUM(p.price) AS daily_total
+FROM dbo.Order_Items AS p
+JOIN dbo.Orders AS t ON p.order_id = t.order_id
+GROUP BY t.customer_id, CONVERT(DATE, t.order_purchase_timestamp);
+GO
+
+CREATE UNIQUE CLUSTERED INDEX idx_vw_DailySalesPerCustomer
+ON dbo.vw_DailySalesPerCustomer(customer_id, order_date);
+
+SELECT 
+    customer_id,
+    order_date,
+    SUM(daily_total) OVER (PARTITION BY customer_id ORDER BY order_date) AS running_total
+FROM dbo.vw_DailySalesPerCustomer;
 
 -- Step 5: Dimension Tables
 SELECT DISTINCT customer_id, customer_zip_code_prefix, customer_city, customer_state
