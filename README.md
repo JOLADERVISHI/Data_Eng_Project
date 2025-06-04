@@ -12,7 +12,7 @@ This project contains a SQL-based data engineering solution for the Brazilian E-
   - Defines a procedure to populate the fact table
   - Builds dimension tables and validation queries
 
-## How to Use
+## Usage
 
 1. Open the script in SQL Server Management Studio (SSMS).
 2. Execute the script step by step or as a whole.
